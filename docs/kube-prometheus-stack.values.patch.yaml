@@ -1,0 +1,39 @@
+kube-state-metrics:
+  prometheus:
+    # deploy a ServiceMonitor so the metrics are collected by Prometheus
+    monitor:
+      enabled: true
+
+  rbac:
+    create: true
+    extraRules:
+    - apiGroups: ["hepapi.com"]
+      resources: ["hpaprescalers", "hpaprescalerprofiles", "hpaprescalers/status", "hpaprescalerprofiles/status"]
+      verbs: ["list", "watch"]
+
+  customResourceState:
+    enabled: true
+    config: 
+      kind: CustomResourceStateMetrics
+      spec:
+        resources:
+        - groupVersionKind:
+            group: hepapi.com
+            version: v1
+            kind: HpaPrescaler
+          labelsFromPath:
+            name: ["metadata", "name"]
+            namespace: ["metadata", "namespace"]
+          metrics:
+          - name: hpaprescaler_info
+            help: "Exposes details about HpaPrescaler objects"
+            each:
+              type: Info
+              info:
+                labelsFromPath:
+                  argoAppName: ["spec", "argocdAppName"]
+                  targetProfileName: ["spec", "targetProfileName"]
+                  targetTime:  ["spec", "timeStart"]
+                  state: ["status", "state"]
+                  message: ["status", "message"]
+                  processedAt: ["status", "processedAt"]

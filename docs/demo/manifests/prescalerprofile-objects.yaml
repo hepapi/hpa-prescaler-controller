@@ -1,0 +1,32 @@
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerProfile
+metadata:
+  name: wrongprofile
+spec:
+  minReplicas: 11
+  maxReplicas: 5
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerProfile
+metadata:
+  name: p1
+spec:
+  minReplicas: 1
+  maxReplicas: 3
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerProfile
+metadata:
+  name: p2
+spec:
+  minReplicas: 4
+  maxReplicas: 7
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerProfile
+metadata:
+  name: p3
+spec:
+  minReplicas: 8
+  maxReplicas: 10

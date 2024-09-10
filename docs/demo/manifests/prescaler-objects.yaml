@@ -1,0 +1,80 @@
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescaler
+metadata:
+  name: my-prescaler3
+  finalizers: []
+spec:
+  argocdAppName: nginx3
+  timeStart: "2024-08-29T11:38:55Z"
+  targetProfileName: "p3"
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescaler
+metadata:
+  name: my-prescaler2
+  finalizers: []
+spec:
+  argocdAppName: nginx2
+  timeStart: "2024-08-29T12:35:55Z"
+  targetProfileName: "p2"
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescaler
+metadata:
+  name: my-prescaler1
+  finalizers: []
+spec:
+  argocdAppName: nginx1
+  timeStart: "2024-08-29T13:26:55Z"
+  targetProfileName: "p1"
+# ---
+# apiVersion: hepapi.com/v1
+# kind: HpaPrescaler
+# metadata:
+#   name: my-prescaler5
+#   finalizers: []
+# spec:
+#   argocdAppName: e55555555
+#   timeStart: "2024-08-28T21:26:55Z"
+#   targetProfileName: "p1"
+# ---
+# apiVersion: hepapi.com/v1
+# kind: HpaPrescaler
+# metadata:
+#   name: my-prescaler6
+#   finalizers: []
+# spec:
+#   argocdAppName: g66666666
+#   timeStart: "2024-08-28T15:45:55Z"
+#   targetProfileName: "p3"
+# ---
+# apiVersion: hepapi.com/v1
+# kind: HpaPrescaler
+# metadata:
+#   name: my-prescaler7
+#   finalizers: []
+# spec:
+#   argocdAppName: nginx2
+#   timeStart: "2024-08-28T15:55:55Z"
+#   targetProfileName: "p2"
+# ---
+# apiVersion: hepapi.com/v1
+# kind: HpaPrescaler
+# metadata:
+#   name: my-prescaler8
+#   finalizers: []
+# spec:
+#   argocdAppName: i88888888
+#   timeStart: "2024-08-28T22:56:55Z"
+#   targetProfileName: "p1"
+# ---
+# apiVersion: hepapi.com/v1
+# kind: HpaPrescaler
+# metadata:
+#   name: my-prescaler4
+#   finalizers: []
+# spec:
+#   argocdAppName: d44444444444
+#   timeStart: "2024-07-28T15:48:55Z"
+#   targetProfileName: "p2"

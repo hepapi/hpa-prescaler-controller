@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nginx1
+spec:
+  project: default
+  source:
+    chart: nginx
+    repoURL: registry-1.docker.io/bitnamicharts 
+    targetRevision: 15.9.0
+    helm:
+      parameters:
+        - name: "autoscaling.enabled"
+          value: "true"
+        - name: "autoscaling.minReplicas"
+          value: "1"
+        - name: "autoscaling.maxReplicas"
+          value: "2"
+        - name: "fullnameOverride"
+          value: "nginx1"
+  destination:
+    name: "in-cluster"
+    namespace: default
+
+
