@@ -2,10 +2,11 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+my-values.yaml
+monitoring/_current-stack-values.yaml
 # C extensions
 *.so
-
+.DS_Store
 # Distribution / packaging
 .Python
 build/
