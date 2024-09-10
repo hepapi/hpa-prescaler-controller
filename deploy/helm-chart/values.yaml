@@ -1,0 +1,61 @@
+
+image:
+  repository: ""
+  pullPolicy: "Always"
+  tag: ""
+
+
+configMap:
+  enabled: true
+  configValues:
+    LOOP_INTERVAL_SECS: "60"
+    LOOP_INITAL_DELAY_SECS: "10"
+    GRACE_TIME_DELTA_MINS: "10"
+    DEPLOY_ENV: "Production" 
+    ARGOCD_ENDPOINT: "http://argocd-server.argocd"
+    ARGOCD_TOKEN: ""
+    ARGOCD_SSL_VERIFY: "false"
+
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: "hpa-prescaler-controller"
+
+prometheusAlerts:
+  enabled: true
+  prescalerError:
+    severity: "critical"
+    for: "5s"
+  podNotReady:
+    severity: "critical"
+    for: "2m"
+
+
+
+resources: {}
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

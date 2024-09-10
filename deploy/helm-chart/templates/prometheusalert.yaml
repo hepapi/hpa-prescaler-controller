@@ -1,0 +1,40 @@
+{{- if (.Values.prometheusAlerts).enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: hpaprescaler-alerting-rules
+  labels:
+    release: kube-prometheus-stack
+    {{- include "helm-chart.selectorLabels" . | nindent 4 }}
+spec:
+  groups:
+  - name: HpaPrescalerAlerts
+    rules:
+    - alert: HpaPrescalerError
+      expr: kube_customresource_hpaprescaler_info{state="FAILED"} == 1
+      for: {{ .Values.prometheusAlerts.prescalerError.for }}
+      labels:
+        severity: {{ .Values.prometheusAlerts.prescalerError.severity }}
+      annotations:
+        summary: "HpaPrescaler({{`{{`}} $labels.name {{`}}`}}) FAILED to prescale HPA."
+        description: "HpaPrescaler({{`{{`}} $labels.name {{`}}`}}) FAILED to set the ArgoApp({{`{{`}} $labels.argoAppName {{`}}`}}) to TargetProfile({{`{{`}} $labels.targetProfileName {{`}}`}}) for TargetTime({{`{{`}} $labels.targetTime {{`}}`}}). Error: {{`{{`}} $labels.message {{`}}`}}"
+        argoAppName: "{{`{{`}} $labels.argoAppName {{`}}`}}"
+        targetProfileName: "{{`{{`}} $labels.targetProfileName {{`}}`}}"
+        message: "{{`{{`}} $labels.message {{`}}`}}"
+        processedAt: "{{`{{`}} $labels.processedAt {{`}}`}}"
+        targetTime: "{{`{{`}} $labels.targetTime {{`}}`}}"
+    - alert: HpaPrescalerPodNotReady
+      expr: |
+        sum by (namespace, pod) (
+            kube_pod_info{pod=~"hpa-prescaler-controller.*"}
+        )
+        * on(namespace, pod) group_left(condition) (
+            kube_pod_status_ready{condition="false"}
+        ) > 0
+      for: {{ .Values.prometheusAlerts.podNotReady.for }}
+      labels:
+        severity: {{ .Values.prometheusAlerts.podNotReady.severity }}
+      annotations:
+        summary: "HpaPrescaler pod({{`{{`}} $labels.pod }}) in {{`{{`}} $labels.namespace }} namespace NOT Ready"
+        description: "HpaPrescaler pod({{`{{`}} $labels.pod }}) in {{`{{`}} $labels.namespace }} namespace NOT Ready"
+{{- end }}

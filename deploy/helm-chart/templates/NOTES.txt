@@ -1,0 +1,9 @@
+1. List HpaPrescaler Profile objects:
+    kubectl get -n {{ .Release.Namespace }} hpaprescalerprofiles 
+
+2. List HpaPrescaler objects:
+    kubectl get -n {{ .Release.Namespace }} hpaprescalers 
+
+3. Get the logs of HpaPrescalerController deployment:
+    kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "helm-chart.fullname" . }}
+
