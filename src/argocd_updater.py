@@ -6,8 +6,8 @@ from enum import Enum
 import json
 
 
-ARGOCD_ENDPOINT = os.environ.get('ARGOCD_ENDPOINT', 'default-argocd-endpoint')
-ARGOCD_TOKEN = os.environ.get('ARGOCD_TOKEN','default-argocd-api-token')
+ARGOCD_ENDPOINT = os.environ.get('ARGOCD_ENDPOINT')
+ARGOCD_TOKEN = os.environ.get('ARGOCD_TOKEN')
 ARGOCD_SSL_VERIFY = os.environ.get('ARGOCD_SSL_VERIFY', 'false').lower() == 'true'
 
 
@@ -49,6 +49,19 @@ def get_argocd_app(app_name):
 
 
 def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config,logger):
+    
+    has_helm_parameters_def = app_spec['source'].get('helm', {}).get('parameters',False) != False
+
+    if not has_helm_parameters_def:
+        logger.info(f"ArgoApp({app_name}) DOES NOT HAVE .source.helm definition, adding it now.")
+        app_spec['source']['helm'] = {
+            "parameters": [
+                {'name': 'autoscaling.enabled', 'value': 'true'}, 
+                {'name': 'autoscaling.minReplicas', 'value': False}, 
+                {'name': 'autoscaling.maxReplicas', 'value': False}
+            ]
+        }
+
     helm_parameters = app_spec['source']['helm']['parameters']
     _done_max_replicas = False
     _done_min_replicas = False
@@ -126,5 +139,6 @@ def update_argocd_app(app_name, new_hpa_config, logger):
 
 if __name__ == '__main__':
     import logging
-    a =update_argocd_app('nginx1', {"minReplicas": 1, "maxReplicas": 9},logging.getLogger(__name__))
+    a =update_argocd_app('nginx-no-helm-params', {"minReplicas": 1, "maxReplicas": 9},logging.getLogger(__name__))
+    # a =update_argocd_app('nginx2', {"minReplicas": 1, "maxReplicas": 9},logging.getLogger(__name__))
     a
