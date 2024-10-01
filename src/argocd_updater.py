@@ -70,7 +70,11 @@ def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config
 
     if has_helm_def:
         if has_helm_parameters_def:
-            app_spec['source']['helm']['parameters'].extend(_default_autoscale_helm_params)
+            existing_parameter_names = (_.get('name') for _ in app_spec['source']['helm']['parameters'])
+            for _a_helm_param in _default_autoscale_helm_params:
+                is_already_in_params = _a_helm_param['name'] in existing_parameter_names
+                if not is_already_in_params:
+                    app_spec['source']['helm']['parameters'].append(_a_helm_param)
         else:
             logger.info(f"ArgoApp({app_name}) DOES NOT HAVE .source.helm.parameters definition, adding it now.")
             app_spec['source']['helm']['parameters'] = _default_autoscale_helm_params
