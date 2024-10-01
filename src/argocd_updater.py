@@ -25,20 +25,27 @@ _headers = {
     "Content-Type": "application/json"
 }
 
+_cookies = {
+    "argocd.token": ARGOCD_TOKEN
+}
+
 if not ARGOCD_SSL_VERIFY:
     # Disable SSL warnings if SSL Verification is disabled
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 
-def get_argocd_app(app_name):
+def get_argocd_app(app_name, logger):
     _get_app_endpoint=f"{ARGOCD_ENDPOINT}/api/v1/applications"
     qparams=f"?name={app_name}"
     try:
-        response = requests.get(f"{_get_app_endpoint}{qparams}", headers=_headers, verify=ARGOCD_SSL_VERIFY)
+        response = requests.get(f"{_get_app_endpoint}{qparams}", headers=_headers, cookies=_cookies, verify=ARGOCD_SSL_VERIFY)
     except requests.exceptions.ConnectionError:
+        logger.error(f"Connection Error when querying ArgoCD api for App({app_name}). Message: {response.text}")
         return False, ArgoAppUpdateStatus.ARGO_CONNECTION_FAILED       
+
         
     if not response.ok:
+        logger.error(f"Error when querying ArgoCD api for App({app_name}). Message: {response.text}")
         return False, ArgoAppUpdateStatus.APP_NOT_FOUND       
     response_json = response.json()
 
@@ -51,16 +58,25 @@ def get_argocd_app(app_name):
 def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config,logger):
     
     has_helm_parameters_def = app_spec['source'].get('helm', {}).get('parameters',False) != False
+    has_helm_def = app_spec['source'].get('helm', False)
 
-    if not has_helm_parameters_def:
+
+    _default_autoscale_helm_params = [
+        {'name': 'autoscaling.enabled', 'value': 'true'}, 
+        {'name': 'autoscaling.minReplicas', 'value': False}, 
+        {'name': 'autoscaling.maxReplicas', 'value': False}
+    ]
+    
+
+    if has_helm_def:
+        if has_helm_parameters_def:
+            app_spec['source']['helm']['parameters'].update(_default_autoscale_helm_params)
+        else:
+            logger.info(f"ArgoApp({app_name}) DOES NOT HAVE .source.helm.parameters definition, adding it now.")
+            app_spec['source']['helm']['parameters'] = _default_autoscale_helm_params
+    else:
         logger.info(f"ArgoApp({app_name}) DOES NOT HAVE .source.helm definition, adding it now.")
-        app_spec['source']['helm'] = {
-            "parameters": [
-                {'name': 'autoscaling.enabled', 'value': 'true'}, 
-                {'name': 'autoscaling.minReplicas', 'value': False}, 
-                {'name': 'autoscaling.maxReplicas', 'value': False}
-            ]
-        }
+        app_spec['source']['helm'] = {'parameters':  _default_autoscale_helm_params}
 
     helm_parameters = app_spec['source']['helm']['parameters']
     _done_max_replicas = False
@@ -91,7 +107,7 @@ def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config
 
 def update_argocd_app(app_name, new_hpa_config, logger):
     _app_spec_update_endpoint=f"{ARGOCD_ENDPOINT}/api/v1/applications/{app_name}/spec"
-    app_data, _get_app_status = get_argocd_app(app_name)
+    app_data, _get_app_status = get_argocd_app(app_name, logger)
     
     if _get_app_status != ArgoAppUpdateStatus.SUCCESS:
         logger.error(f"ArgoCD App({app_name}) is NOT FOUND. Does this app exists on ArgoCD?")
@@ -101,12 +117,12 @@ def update_argocd_app(app_name, new_hpa_config, logger):
     new_app_spec = update_app_spec_with_new_hpa_config(app_name, app_spec, new_hpa_config, logger)
     
     try:
-        response = requests.put(_app_spec_update_endpoint, data=json.dumps(new_app_spec), headers=_headers, verify=ARGOCD_SSL_VERIFY)
+        response = requests.put(_app_spec_update_endpoint, data=json.dumps(new_app_spec), headers=_headers, cookies=_cookies, verify=ARGOCD_SSL_VERIFY)
     except requests.exceptions.ConnectionError:
         return False, ArgoAppUpdateStatus.ARGO_CONNECTION_FAILED       
     
     if not response.ok:
-        logger.error(f"Failed to update ArgoCD App({app_name}).")
+        logger.error(f"Failed to update ArgoCD App({app_name}). ERROR: {response.text}")
         return False, ArgoAppUpdateStatus.APP_NOT_UPDATED
 
     updated_spec = response.json()
@@ -122,7 +138,7 @@ def update_argocd_app(app_name, new_hpa_config, logger):
         # auto sync is disabled, do a sync     
         _app_sync_endpoint=f"{ARGOCD_ENDPOINT}/api/v1/applications/{app_name}/sync"
         try:
-            sync_response = requests.post(_app_sync_endpoint, headers=_headers, verify=ARGOCD_SSL_VERIFY)
+            sync_response = requests.post(_app_sync_endpoint, headers=_headers, cookies=_cookies, verify=ARGOCD_SSL_VERIFY)
         except requests.exceptions.ConnectionError:
             return False, ArgoAppUpdateStatus.ARGO_CONNECTION_FAILED       
         
@@ -137,8 +153,8 @@ def update_argocd_app(app_name, new_hpa_config, logger):
 
 
 
-if __name__ == '__main__':
-    import logging
-    a =update_argocd_app('nginx-no-helm-params', {"minReplicas": 1, "maxReplicas": 9},logging.getLogger(__name__))
-    # a =update_argocd_app('nginx2', {"minReplicas": 1, "maxReplicas": 9},logging.getLogger(__name__))
-    a
+# if __name__ == '__main__':
+#     import logging
+#     a =update_argocd_app('nginx1', {"minReplicas": 1, "maxReplicas": 9},logging.getLogger(__name__))
+#     # a =update_argocd_app('nginx2', {"minReplicas": 1, "maxReplicas": 9},logging.getLogger(__name__))
+#     a
