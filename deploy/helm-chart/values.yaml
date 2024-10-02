@@ -1,8 +1,8 @@
 
 image:
-  repository: ""
+  repository: "hepapi/hpa-prescaler-controller"
   pullPolicy: "Always"
-  tag: ""
+  tag: "latest"
 
 
 configMap:
