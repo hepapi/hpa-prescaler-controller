@@ -32,6 +32,12 @@ spec:
                   type: string
                 targetProfileName:
                   type: string
+                scaleType:
+                  type: string
+                  enum:
+                    - UP
+                    - DOWN
+                  nullable: true
             status:
               # x-kubernetes-preserve-unknown-fields: true
               type: object
@@ -45,12 +51,6 @@ spec:
                 processedAt:
                   type: string
                   default: ""
-                scaleType:
-                  type: string
-                  enum:
-                    - UP
-                    - DOWN
-                  nullable: true
       additionalPrinterColumns:
         - name: ArgoApp
           type: string
