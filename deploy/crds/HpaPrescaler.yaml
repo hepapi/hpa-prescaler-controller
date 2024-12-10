@@ -45,6 +45,12 @@ spec:
                 processedAt:
                   type: string
                   default: ""
+                scaleType:
+                  type: string
+                  enum:
+                    - UP
+                    - DOWN
+                  nullable: true
       additionalPrinterColumns:
         - name: ArgoApp
           type: string
@@ -55,6 +61,9 @@ spec:
         - name: TargetTime
           type: string
           jsonPath: .spec.timeStart
+        - name: ScaleType
+          type: string
+          jsonPath: .spec.scaleType
         - name: State
           type: string
           jsonPath: .status.state
