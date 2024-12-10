@@ -2,7 +2,7 @@
 image:
   repository: "hepapi/hpa-prescaler-controller"
   pullPolicy: "Always"
-  tag: "latest"
+  tag: "main"
 
 
 configMap:
