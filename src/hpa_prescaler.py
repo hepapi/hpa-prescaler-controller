@@ -23,14 +23,15 @@ LOOP_INITAL_DELAY_SECS=int(os.environ.get('LOOP_INITAL_DELAY_SECS'))
 GRACE_TIME_DELTA_MINS=int(os.environ.get('GRACE_TIME_DELTA_MINS'))
 RELEASE_NAMESPACE=os.environ.get('RELEASE_NAMESPACE')
 DEPLOY_ENV=os.environ.get('DEPLOY_ENV', "Development")
-
+# unset DEPLOY_ENV
 if DEPLOY_ENV.lower() in ('prod', 'production'):
     kubernetes.config.load_incluster_config()
 else:
     kubernetes.config.load_kube_config()
 
 api = kubernetes.client.CustomObjectsApi()
-events_api = kubernetes.client.EventsV1Api()
+events_api = kubernetes.client.EventsApi()
+# events_api = kubernetes.client.EventsV1Api()
 
 class TimeStatus(Enum):
     PASSED = "passed"
@@ -108,6 +109,12 @@ def update_status_of_prescaler_obj(name, namespace, status_body, logger):
         logger.error("Exception when calling patch_namespaced_custom_object_status: %s\n" % e)
         return False
         # raise kopf.TemporaryError(f"ERROR: can not patch .status of HpaPrescaler({name})", delay=30)
+
+
+@kopf.on.delete('hpaprescalers')
+def delete_hpaprescaler(spec, logger, **kwargs):
+    # this function is needed for Finalizers to be removed correctly
+    logger.info(f"Deleting HpaPrescaler object: {json.dumps(spec, default=str)}")
 
 @kopf.on.create('hpaprescalers')
 def create_hpaprescaler(name, namespace, status, logger, **kwargs):
