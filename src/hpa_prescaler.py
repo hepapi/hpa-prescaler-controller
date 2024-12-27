@@ -30,8 +30,8 @@ else:
     kubernetes.config.load_kube_config()
 
 api = kubernetes.client.CustomObjectsApi()
-events_api = kubernetes.client.EventsApi()
-# events_api = kubernetes.client.EventsV1Api()
+# events_api = kubernetes.client.EventsApi()
+events_api = kubernetes.client.EventsV1Api()
 
 class TimeStatus(Enum):
     PASSED = "passed"
