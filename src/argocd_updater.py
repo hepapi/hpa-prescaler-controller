@@ -106,6 +106,15 @@ def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config
         helm_parameters.append({'name': 'autoscaling.maxReplicas', 'value': max_hpa_conf})
         logger.debug(f"ArgoApp({app_name}) doesn't have autoscaling.maxReplicas set, setting it to: {max_hpa_conf}")
 
+    
+    # app_spec.destination -> should have only one server or name
+    # otherwise ArgoCD API will error: ''spec is invalid: application destination can't have both name and server defined''
+    if 'server' in app_spec['destination']:
+        if 'name' in app_spec['destination']:
+            logger.debug(f'ArgoApp({app_name}) .spec.destination has .server and .name defined in it. Removing .server definition.')
+            app_spec['destination'].pop('server')
+            logger.debug(f"ArgoApp({app_name}) Updated .destination: {app_spec['destination']}")
+
     return app_spec
 
 
