@@ -11,7 +11,7 @@ spec:
     singular: hpaprescalerprofile
     shortNames:
       - prescalerprofile
-      - hpsprofile
+      - hpaprofile
   versions:
     - name: v1
       served: true
@@ -28,8 +28,8 @@ spec:
                 maxReplicas:
                   type: integer
               x-kubernetes-validations:
-                - rule: "self.minReplicas < self.maxReplicas"
-                  message: "minReplicas must be less than maxReplicas"
+                - rule: "self.minReplicas <= self.maxReplicas"
+                  message: "minReplicas must be less than or equal to maxReplicas"
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true
