@@ -155,7 +155,6 @@ def update_argocd_app(app_name, new_hpa_config, logger):
         except requests.exceptions.ConnectionError:
             return False, ArgoAppUpdateStatus.ARGO_CONNECTION_FAILED       
         
-        sync_response
         if not sync_response.ok:
             logger.error(f"Failed to SYNC ArgoCD App({app_name}).")
             return False, ArgoAppUpdateStatus.SYNC_FAILED
