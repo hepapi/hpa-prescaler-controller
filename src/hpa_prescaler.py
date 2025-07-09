@@ -30,8 +30,8 @@ else:
     kubernetes.config.load_kube_config()
 
 api = kubernetes.client.CustomObjectsApi()
-# events_api = kubernetes.client.EventsApi()
-events_api = kubernetes.client.EventsV1Api()
+events_api = kubernetes.client.EventsApi()
+# events_api = kubernetes.client.EventsV1Api()
 
 class TimeStatus(Enum):
     PASSED = "passed"
@@ -48,6 +48,9 @@ class OP_STATE(Enum):
 def configure(settings: kopf.OperatorSettings, **_):
     # """disable event posting with logs"""
     settings.posting.enabled = False
+    # settings.persistence.finalizer = None
+    settings.persistence.finalizer = "hpa-prescaler.hepapi.com/kopf-finalizer"
+
     # settings.posting.level = logging.ERROR
        
 @kopf.on.login()
@@ -55,32 +58,33 @@ def login_fn(**kwargs):
     """handles k8s authentication"""
     return kopf.login_with_service_account(**kwargs) or kopf.login_with_kubeconfig(**kwargs)
 
+
 def create_kubernetes_event(namespace, event_type, regarding_prescaler_name, action, reason, note, logger):
     # Normal, Warning, Error
     now = datetime.datetime.now(datetime.timezone.utc)
     
 
-    event_body = kubernetes.client.EventsV1Event(
-        metadata=kubernetes.client.V1ObjectMeta(
-            generate_name="hpa-prescaler", namespace=namespace
-        ),
-        reason=reason,
-        note=note,
-        event_time=now,
-        action=action,
-        type=event_type,
-        reporting_instance="hpa-prescaler-controller",
-        reporting_controller="hpa-prescaler-controller",
-        regarding=kubernetes.client.V1ObjectReference(
-            kind="hpaprescaler", name=regarding_prescaler_name, namespace=namespace
-        ),
-    )
-    try:
-        api_response = events_api.create_namespaced_event(namespace, event_body)
-        return api_response
-    except ApiException as e:
-        logger.error("Exception when creating K8s Event: %s\n" % e)
-        return False
+    # event_body = kubernetes.client.EventsV1Event(
+    #     metadata=kubernetes.client.V1ObjectMeta(
+    #         generate_name="hpa-prescaler", namespace=namespace
+    #     ),
+    #     reason=reason,
+    #     note=note,
+    #     event_time=now,
+    #     action=action,
+    #     type=event_type,
+    #     reporting_instance="hpa-prescaler-controller",
+    #     reporting_controller="hpa-prescaler-controller",
+    #     regarding=kubernetes.client.V1ObjectReference(
+    #         kind="hpaprescaler", name=regarding_prescaler_name, namespace=namespace
+    #     ),
+    # )
+    # try:
+    #     api_response = events_api.create_namespaced_event(namespace, event_body)
+    #     return api_response
+    # except ApiException as e:
+    #     logger.error("Exception when creating K8s Event: %s\n" % e)
+    #     return False
 
 
 def check_time_status(target_time_iso8601, grace_minutes=GRACE_TIME_DELTA_MINS) -> TimeStatus:
@@ -95,6 +99,32 @@ def check_time_status(target_time_iso8601, grace_minutes=GRACE_TIME_DELTA_MINS) 
         return TimeStatus.WITHIN_GRACE_WINDOW
     else:
         return TimeStatus.NOT_STARTED
+
+
+def check_time_status_v2(target_time_iso8601, grace_minutes=GRACE_TIME_DELTA_MINS) -> TimeStatus:
+    """checks now to given target time, returns TimeStatus"""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    grace_delta = datetime.timedelta(minutes=grace_minutes)
+    target_time = parser.parse(target_time_iso8601)
+    
+    if now < target_time:
+        return TimeStatus.NOT_STARTED
+    
+    # Time windows visualization:
+    #                          |                          |    grace_delta
+    #                          |                          |   <------------>
+    # NOT_STARTED:             |    WITHIN_GRACE:         |       PASSED:
+    # ----[now]------------->  |   [target]----[now]--->  |    [target]----[now]---->
+    #      ▼                   |      ▼          ▼        |       ▼          ▼
+    #   Current time           |  Target time  Current    |    Target    Current time
+    #   before target          |  reached     time in     |    time      after grace
+    #                          |              grace       |    passed     period
+    
+    elif now >= target_time + grace_delta:
+        return TimeStatus.PASSED
+    else:
+        return TimeStatus.WITHIN_GRACE_WINDOW
+
 
 def update_status_of_prescaler_obj(name, namespace, status_body, logger):
     try:
@@ -114,7 +144,8 @@ def update_status_of_prescaler_obj(name, namespace, status_body, logger):
 @kopf.on.delete('hpaprescalers')
 def delete_hpaprescaler(spec, logger, **kwargs):
     # this function is needed for Finalizers to be removed correctly
-    logger.info(f"Deleting HpaPrescaler object: {json.dumps(spec, default=str)}")
+    hpaprescaler_str = ', '.join(f"{k}={str(v)}" for k, v in spec.items())
+    logger.info(f"Deleting HpaPrescaler object: {hpaprescaler_str}")
 
 @kopf.on.create('hpaprescalers')
 def create_hpaprescaler(name, namespace, status, logger, **kwargs):
@@ -129,11 +160,12 @@ def create_hpaprescaler(name, namespace, status, logger, **kwargs):
 @kopf.daemon('hpaprescalers', initial_delay=LOOP_INITAL_DELAY_SECS)
 async def monitor_hpa_prescalers(stopped, logger, name, namespace, status, spec, **kwargs):
     """Runs for each HpaPrescaler object, and waits for some time..."""
-    api = kubernetes.client.CustomObjectsApi()
     utc_current_time_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     prescaler_name = f"HpaPrescaler({namespace}/{name})"
 
+
     while not stopped:
+
         if not status:
             logger.warn(f"{prescaler_name} doesn't have a .status, skipping for now...")
             _non_status_delay_secs = 30
@@ -147,12 +179,16 @@ async def monitor_hpa_prescalers(stopped, logger, name, namespace, status, spec,
         if status.get('state') != OP_STATE.PENDING.value:
             # already processed
             logger.debug(f"Skipping {prescaler_name} as it's already processed...")
-            return {'lastCheckedAt': utc_current_time_str}
+            return
 
-        # must pending CRD
+        
+
+        # must be pending CRD
         assert status.get('state') == OP_STATE.PENDING.value
         
-        time_status: TimeStatus = check_time_status(timeStart, GRACE_TIME_DELTA_MINS)
+        time_status: TimeStatus = check_time_status_v2(timeStart, GRACE_TIME_DELTA_MINS)
+        time_delta = datetime.datetime.strptime(timeStart, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc) - datetime.datetime.now(datetime.timezone.utc)
+        # logger.info(f"looping for {prescaler_name} time_status: {time_status}, time_delta: {time_delta}")
         
         if time_status == TimeStatus.PASSED:
             logger.error(f"Target time for {prescaler_name} has passed.")
@@ -164,7 +200,7 @@ async def monitor_hpa_prescalers(stopped, logger, name, namespace, status, spec,
                 raise kopf.TemporaryError(f"ERROR: can not patch .status of {prescaler_name}", delay=30)
             
         elif time_status == TimeStatus.WITHIN_GRACE_WINDOW:
-            logger.info(f"ACCEPTED {prescaler_name} as it's target time is withing GraceWindow({GRACE_TIME_DELTA_MINS} mins).")
+            logger.info(f"ACCEPTED {prescaler_name} as it's target time is within GraceWindow({GRACE_TIME_DELTA_MINS} mins).")
 
             _update_success, _app_update_status = update_hpa_of_argocd_app(name, namespace, spec, logger)
 
@@ -176,25 +212,21 @@ async def monitor_hpa_prescalers(stopped, logger, name, namespace, status, spec,
                 if not update_status_of_prescaler_obj(name, namespace, _succeeded_status, logger):
                     logger.error(f"Failed to update .status of HpaPrescaler({name}) obj to: {json.dumps(_succeeded_status)}")
                     create_kubernetes_event(RELEASE_NAMESPACE, 'Warning', name, 'UpdatePrescalerStatus', 'FailUpdatePrescalerStatus', f"Failed to update ArgocdApp({argocdAppName}) with updated status. Failure: {_app_update_status.value}", logger)
-
-                    
                     raise kopf.TemporaryError(f"ERROR: can not patch .status of {prescaler_name}", delay=30)
-
                 create_kubernetes_event(RELEASE_NAMESPACE, 'Normal', name, 'ProcessPrescaler', 'SuccessfullyUpdatedHPA', f"Succeeded to update the HPA of ArgocdApp({argocdAppName}) with HpaPrescaler({name})", logger)
-                return {'lastCheckedAt': utc_current_time_str}  # stop monitoring this obj 
             else:
                 # within grace window, but something went wrong with ArgoCD communication
                 logger.error(f"Failed to update ArgocdApp({argocdAppName}) with updated status. Failure: {_app_update_status}")
                 _argo_issue_status = {'state': OP_STATE.FAILED.value, "message": _app_update_status.value, "processedAt":_updated_time_str}
                 update_status_of_prescaler_obj(name, namespace, _argo_issue_status, logger)
                 create_kubernetes_event(RELEASE_NAMESPACE, 'Warning', name, 'UpdateArgoAppHPA', 'FailToUpdateArgoAppHPA', f"Failed to update ArgocdApp({argocdAppName}) with updated status. Failure: {_app_update_status}", logger)
+                raise kopf.TemporaryError(f"ERROR: can not patch .status of {prescaler_name}. Failure: {_app_update_status} ", delay=30)
 
         elif time_status == TimeStatus.NOT_STARTED:
             logger.debug(f"Skipping {prescaler_name} as it's in future.")
-        else:
-            logger.error(f"Unchecked kind of TimeStatus: {time_status}")
+
         await stopped.wait(LOOP_INTERVAL_SECS)
-    return {'lastCheckedAt': utc_current_time_str}
+    return
         
         
 def get_hpascaler_profiles(namespace):
