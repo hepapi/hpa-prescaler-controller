@@ -100,11 +100,11 @@ def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config
     
     if not _done_min_replicas:
         helm_parameters.append({'name': 'autoscaling.minReplicas', 'value': min_hpa_conf})
-        logger.debug(f"ArgoApp({app_name}) doesn't have autoscaling.minReplicas set, setting it to: {min_hpa_conf}")
+        logger.info(f"ArgoApp({app_name}) doesn't have autoscaling.minReplicas set, setting it to: {min_hpa_conf}")
     
     if not _done_min_replicas:
         helm_parameters.append({'name': 'autoscaling.maxReplicas', 'value': max_hpa_conf})
-        logger.debug(f"ArgoApp({app_name}) doesn't have autoscaling.maxReplicas set, setting it to: {max_hpa_conf}")
+        logger.info(f"ArgoApp({app_name}) doesn't have autoscaling.maxReplicas set, setting it to: {max_hpa_conf}")
 
     
     # app_spec.destination -> should have only one server or name
@@ -120,6 +120,7 @@ def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config
 
 def update_argocd_app(app_name, new_hpa_config, logger):
     _app_spec_update_endpoint=f"{ARGOCD_ENDPOINT}/api/v1/applications/{app_name}/spec"
+    logger.info(f"Updating ArgoCD App({app_name}) using api endpoint: {_app_spec_update_endpoint}")
     app_data, _get_app_status = get_argocd_app(app_name, logger)
     
     if _get_app_status != ArgoAppUpdateStatus.SUCCESS:
@@ -130,12 +131,14 @@ def update_argocd_app(app_name, new_hpa_config, logger):
     new_app_spec = update_app_spec_with_new_hpa_config(app_name, app_spec, new_hpa_config, logger)
     
     try:
+        logger.debug(f"Updating ArgoCD App({app_name}) .spec with new HPA config: {json.dumps(new_app_spec)}")
         response = requests.put(_app_spec_update_endpoint, data=json.dumps(new_app_spec), headers=_headers, cookies=_cookies, verify=ARGOCD_SSL_VERIFY)
     except requests.exceptions.ConnectionError:
+        logger.error(f"Failed to connect to ArgoCD API endpoint: {_app_spec_update_endpoint}")
         return False, ArgoAppUpdateStatus.ARGO_CONNECTION_FAILED       
     
     if not response.ok:
-        logger.error(f"Failed to update ArgoCD App({app_name}). ERROR: {response.text}")
+        logger.error(f"Failed to update ArgoCD App({app_name}). Status code: {response.status_code}, Response: {response.text}")
         return False, ArgoAppUpdateStatus.APP_NOT_UPDATED
 
     updated_spec = response.json()
