@@ -49,6 +49,8 @@ def configure(settings: kopf.OperatorSettings, **_):
     # """disable event posting with logs"""
     settings.posting.enabled = False
     # settings.posting.level = logging.ERROR
+    settings.persistence.finalizer = "hpa-prescaler.hepapi.com/kopf-finalizer"
+
        
 @kopf.on.login()
 def login_fn(**kwargs):
@@ -60,27 +62,27 @@ def create_kubernetes_event(namespace, event_type, regarding_prescaler_name, act
     now = datetime.datetime.now(datetime.timezone.utc)
     
 
-    event_body = kubernetes.client.EventsV1Event(
-        metadata=kubernetes.client.V1ObjectMeta(
-            generate_name="hpa-prescaler", namespace=namespace
-        ),
-        reason=reason,
-        note=note,
-        event_time=now,
-        action=action,
-        type=event_type,
-        reporting_instance="hpa-prescaler-controller",
-        reporting_controller="hpa-prescaler-controller",
-        regarding=kubernetes.client.V1ObjectReference(
-            kind="hpaprescaler", name=regarding_prescaler_name, namespace=namespace
-        ),
-    )
-    try:
-        api_response = events_api.create_namespaced_event(namespace, event_body)
-        return api_response
-    except ApiException as e:
-        logger.error("Exception when creating K8s Event: %s\n" % e)
-        return False
+    # event_body = kubernetes.client.EventsV1Event(
+    #     metadata=kubernetes.client.V1ObjectMeta(
+    #         generate_name="hpa-prescaler", namespace=namespace
+    #     ),
+    #     reason=reason,
+    #     note=note,
+    #     event_time=now,
+    #     action=action,
+    #     type=event_type,
+    #     reporting_instance="hpa-prescaler-controller",
+    #     reporting_controller="hpa-prescaler-controller",
+    #     regarding=kubernetes.client.V1ObjectReference(
+    #         kind="hpaprescaler", name=regarding_prescaler_name, namespace=namespace
+    #     ),
+    # )
+    # try:
+    #     api_response = events_api.create_namespaced_event(namespace, event_body)
+    #     return api_response
+    # except ApiException as e:
+    #     logger.error("Exception when creating K8s Event: %s\n" % e)
+    #     return False
 
 
 def check_time_status(target_time_iso8601, grace_minutes=GRACE_TIME_DELTA_MINS) -> TimeStatus:
