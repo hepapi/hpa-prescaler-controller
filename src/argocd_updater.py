@@ -25,9 +25,7 @@ _headers = {
     "Content-Type": "application/json"
 }
 
-_cookies = {
-    "argocd.token": ARGOCD_TOKEN
-}
+_cookies = { "argocd.token": ARGOCD_TOKEN }
 
 if not ARGOCD_SSL_VERIFY:
     # Disable SSL warnings if SSL Verification is disabled
@@ -66,7 +64,6 @@ def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config
         {'name': 'autoscaling.minReplicas', 'value': False}, 
         {'name': 'autoscaling.maxReplicas', 'value': False}
     ]
-    
 
     if has_helm_def:
         if has_helm_parameters_def:
