@@ -351,14 +351,19 @@ def health_check_probe(logger, **kwargs):
     # Test endpoint (health check)
     test_url = f"{ARGOCD_ENDPOINT}/api/v1/session/userinfo"
     headers = {"Authorization": f"Bearer {ARGOCD_TOKEN}"}
-
+    _cookies = { "argocd.token": ARGOCD_TOKEN }
     try:
-        response = requests.get(test_url, headers=headers, timeout=ARGOCD_HEALTH_CHECK_TIMEOUT, verify=ARGOCD_SSL_VERIFY)
+        response = requests.get(test_url, headers=headers, cookies=_cookies, timeout=ARGOCD_HEALTH_CHECK_TIMEOUT, verify=ARGOCD_SSL_VERIFY)
+        
         if response.status_code == 200:
             current_time = datetime.datetime.now(datetime.timezone.utc)
             formatted_time = current_time.strftime('%Y-%m-%d %H:%M:%S UTC')
-            return f"Health check last passed at: {formatted_time}"  # good path
-        
+
+            if response.json().get('loggedIn', False) == True:
+                return f"Health check last passed at: {formatted_time}"  # good path
+            else:
+                raise kopf.TemporaryError("[HealthCheck] failed: ArgoCD endpoint reachable but authentication failed", delay=on_failure_delay)
+            
         elif response.status_code in [401, 403]:
             # logger.error(f"[HealthCheck] failed: ArgoCD endpoint reachable but authentication failed (status {response.status_code})")
             raise kopf.TemporaryError("[HealthCheck] failed: ArgoCD endpoint reachable but authentication failed", delay=on_failure_delay)
@@ -370,7 +375,6 @@ def health_check_probe(logger, **kwargs):
         logger.error(f"[HealthCheck] failed: Unexpected error: {str(e)}")
         raise kopf.TemporaryError("[HealthCheck] failed service unavailable", delay=on_failure_delay)
     
-
 
 
 @kopf.on.startup()
