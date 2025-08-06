@@ -1,3 +1,13 @@
+run.sh
+src/test/auto.yaml
+sealed-secrets-argoapp.yml
+hepapi-keycloak-text.md
+.vscode/
+src/done.md
+src/test/
+a
+profiles.yaml
+plan.excalidraw
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
