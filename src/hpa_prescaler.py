@@ -131,7 +131,7 @@ def update_status_of_prescaler_obj(name, namespace, status_body, logger):
         return False
 
 
-@kopf.timer('hpaprescalers', interval=OLD_PRESCALERS_CHECK_EVERY_N_MINUTES * 60.0)
+@kopf.timer('hpaprescalers', interval=OLD_PRESCALERS_CHECK_EVERY_N_MINUTES * 60.0, initial_delay=25)
 def remove_old_prescalers_cronjob(logger, name, namespace, status, spec, **kwargs):
     logger.debug(f"[Old Prescaler Removal] Starting cleanup check for HpaPrescaler({name})")
     
@@ -204,7 +204,7 @@ async def monitor_hpa_prescalers(stopped, logger, name, namespace, status, spec,
         
         if status.get('state') != OP_STATE.PENDING.value:
             # already processed
-            logger.debug(f"Skipping {prescaler_name} as it's already processed...")
+            logger.debug(f"Skipping {prescaler_name} as it's already processed, state: {status.get('state')}")
             return  # stop monitoring this obj 
 
 
