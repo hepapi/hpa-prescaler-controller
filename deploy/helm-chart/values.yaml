@@ -15,6 +15,14 @@ configMap:
     ARGOCD_ENDPOINT: "http://argocd-server.argocd"
     ARGOCD_TOKEN: ""
     ARGOCD_SSL_VERIFY: "false"
+    KUBECONFIG_OR_SERVICE_ACCOUNT: "serviceaccount"
+    DO_ACTUALLY_DELETE_OLD_PRESCALERS: "false"
+    DELETE_OLD_PRESCALERS_AFTER_DAYS: "14"  # keep prescalers for N days
+    OLD_PRESCALERS_CHECK_EVERY_N_MINUTES: "500"
+    DO_CREATE_KUBERNETES_EVENTS: "false"
+    GRACE_WINDOW_ALGORITHM_NAME: "accept_window_is_before_target_time"  # default
+    # GRACE_WINDOW_ALGORITHM_NAME: "accept_window_is_after_target_time"
+    ARGOCD_HEALTH_CHECK_TIMEOUT: "10"
 
 
 imagePullSecrets: []
