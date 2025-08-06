@@ -10,7 +10,6 @@ from random import choice
 kubernetes.config.load_kube_config()
 api = kubernetes.client.CustomObjectsApi()
 
-
 def generate_hpaprescaler_objects(name_prefix, app_name_list, profile_name_list,namespace, obj_count, time_between_mins):
     current_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=20)
 
@@ -44,12 +43,12 @@ def generate_hpaprescaler_objects(name_prefix, app_name_list, profile_name_list,
         
     
 if __name__ == '__main__':
-    name_prefix='t3-'
-    app_name_list=['sealed-secrets']
-    profile_name_list=['p1', 'p2', 'p3']
+    name_prefix='destt3-'
+    app_name_list=['nginx-ingress',]
+    profile_name_list=['p1','p2','p3']
     namespace='default'
-    obj_count=10
-    time_between_mins=5
+    obj_count=5
+    time_between_mins=0.5
     generate_hpaprescaler_objects(
         name_prefix,
         app_name_list,
