@@ -40,7 +40,7 @@ OLD_PRESCALERS_CHECK_EVERY_N_MINUTES = int(os.environ.get('OLD_PRESCALERS_CHECK_
 
 DO_CREATE_KUBERNETES_EVENTS = os.environ.get('DO_CREATE_KUBERNETES_EVENTS', 'false').lower() == 'true'
 
-ALGORITHM_NAME = os.environ.get('ALGORITHM_NAME', 'check_time_status')
+GRACE_WINDOW_ALGORITHM_NAME = os.environ.get('GRACE_WINDOW_ALGORITHM_NAME', 'accept_window_is_before_target_time2')
 
 if KUBECONFIG_OR_SERVICE_ACCOUNT.lower() == 'serviceaccount':
     kubernetes.config.load_incluster_config()
@@ -67,14 +67,15 @@ def get_algorithm(name):
     # must return a function that takes 2 args: target_time_iso8601, grace_minutes
     # and returns a TimeStatus object
     algorithms = {
-        'check_time_status': check_time_status,
+        'accept_window_is_before_target_time': accept_window_is_before_target_time,
+        'accept_window_is_after_target_time': accept_window_is_after_target_time,
     }
-    algo = algorithms.get(name, check_time_status)
+    algo = algorithms.get(name, False)
     if not callable(algo):
         raise ValueError(f"Invalid algorithm name: {name}, must be one of: {', '.join(algorithms.keys())}")
     return algo
 
-def check_time_status(target_time_iso8601, grace_minutes=GRACE_TIME_DELTA_MINS) -> TimeStatus:
+def accept_window_is_before_target_time(target_time_iso8601, grace_minutes=GRACE_TIME_DELTA_MINS) -> TimeStatus:
     """checks now to given target time, returns TimeStatus"""
     now = datetime.datetime.now(datetime.timezone.utc)
     grace_delta = datetime.timedelta(minutes=grace_minutes)
@@ -86,6 +87,35 @@ def check_time_status(target_time_iso8601, grace_minutes=GRACE_TIME_DELTA_MINS) 
         return TimeStatus.WITHIN_GRACE_WINDOW
     else:
         return TimeStatus.NOT_STARTED
+    
+
+def accept_window_is_after_target_time(target_time_iso8601, grace_minutes=GRACE_TIME_DELTA_MINS) -> TimeStatus:
+    """checks now to given target time, returns TimeStatus"""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    grace_delta = datetime.timedelta(minutes=grace_minutes)
+    target_time = parser.parse(target_time_iso8601)
+    
+    if now < target_time:
+        return TimeStatus.NOT_STARTED
+    
+    # Time windows visualization:
+    #                          |                          |    grace_delta
+    #                          |                          |   <------------>
+    # NOT_STARTED:             |    WITHIN_GRACE:         |       PASSED:
+    # ----[now]------------->  |   [target]----[now]--->  |    [target]----[now]---->
+    #      ▼                   |      ▼          ▼        |       ▼          ▼
+    #   Current time           |  Target time  Current    |    Target    Current time
+    #   before target          |  reached     time in     |    time      after grace
+    #                          |              grace       |    passed     period
+    
+    elif now >= target_time + grace_delta:
+        return TimeStatus.PASSED
+    else:
+        return TimeStatus.WITHIN_GRACE_WINDOW
+    
+    
+    
+    
 
 def update_status_of_prescaler_obj(name, namespace, status_body, logger):
     try:
@@ -159,7 +189,8 @@ async def monitor_hpa_prescalers(stopped, logger, name, namespace, status, spec,
     api = kubernetes.client.CustomObjectsApi()
     utc_current_time_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     prescaler_name = f"HpaPrescaler({namespace}/{name})"
-
+    targetProfileName = spec['targetProfileName']
+    
     while not stopped:
         if not status:
             logger.warn(f"{prescaler_name} doesn't have a .status, skipping for now...")
@@ -195,7 +226,7 @@ async def monitor_hpa_prescalers(stopped, logger, name, namespace, status, spec,
             return  # stop monitoring this obj 
         
         # select the algorithm to check the time status 
-        time_status_check_fn = get_algorithm(ALGORITHM_NAME)
+        time_status_check_fn = get_algorithm(GRACE_WINDOW_ALGORITHM_NAME)
         # check if the time is passed or within grace window
         time_status: TimeStatus = time_status_check_fn(timeStart, GRACE_TIME_DELTA_MINS)
         
@@ -230,12 +261,12 @@ async def monitor_hpa_prescalers(stopped, logger, name, namespace, status, spec,
                 return  # stop monitoring this obj 
             else:
                 # within grace window, but something went wrong with ArgoCD communication
-                logger.error(f"Failed to update ArgocdApp({argocdAppName}) with updated status. Failure: {_app_update_status}, Target Profile: {targetProfileName}")
+                logger.error(f"Failed to update ArgocdApp({argocdAppName}). Failure: {_app_update_status}, Target Profile: {targetProfileName}")
                 # _argo_issue_status = {'state': OP_STATE.FAILED.value, "message": _app_update_status.value, "processedAt":_updated_time_str}
                 # update_status_of_prescaler_obj(name, namespace, _argo_issue_status, logger)
                 create_kubernetes_event(RELEASE_NAMESPACE, 'Warning', name, 'UpdateArgoAppHPA', 'FailToUpdateArgoAppHPA', f"Failed to update ArgocdApp({argocdAppName}). Failure: {_app_update_status.value}", logger)
                 # it's within grace window, so we can retry
-                raise kopf.TemporaryError(f"Failed to communicate with and update ArgoCD app {argocdAppName}, retrying in 10 seconds...", delay=10)
+                raise kopf.TemporaryError(f"Failed to communicate with and update ArgoCD app {argocdAppName}, retrying in 15 seconds...", delay=15)
 
 
 
@@ -290,7 +321,7 @@ def update_hpa_of_argocd_app(name, namespace, spec, logger):
 @kopf.on.probe(id='healthcheck')
 def health_check_probe(logger, **kwargs):
     # ---------- Health Check Probe ----------
-    on_failure_delay = 10
+    on_failure_delay = 5
     """Health check probe that tests connectivity and authentication with ArgoCD endpoint"""
     # Test endpoint (health check)
     test_url = f"{ARGOCD_ENDPOINT}/api/v1/session/userinfo"
@@ -363,10 +394,10 @@ def create_kubernetes_event(namespace, event_type, regarding_prescaler_name, act
 
 
 @kopf.on.delete('hpaprescalers')
-def delete_hpaprescaler(spec, status, logger, **kwargs):
+def delete_hpaprescaler(name, spec, status, logger, **kwargs):
     # this function is needed for Finalizers to be removed correctly
-    logger.info(f"Deleting HpaPrescaler object: {json.dumps({'spec': spec, 'status': status}, default=str)}")
-    return 
+    logger.info(f"Deleting HpaPrescaler object: {json.dumps({'name': name, 'spec': spec, 'status': status}, default=str)}")
+
 
 @kopf.on.create('hpaprescalers')
 def create_hpaprescaler(name, namespace, status, logger, **kwargs):
