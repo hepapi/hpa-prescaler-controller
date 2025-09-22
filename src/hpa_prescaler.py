@@ -13,6 +13,7 @@ from enum import Enum
 from argocd_updater import update_argocd_app, ArgoAppUpdateStatus 
 import asyncio
 import random
+from croniter import croniter
 
 # disable some logs to reduce noise
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)  # disables health check logs
@@ -62,7 +63,144 @@ class OP_STATE(Enum):
     PENDING = 'PENDING'
     SUCCEEDED = 'SUCCEEDED'
     FAILED = 'FAILED'
+
+
+
+
+# ---- CRON JOB FUNCTIONS ----
+
+
+
+@kopf.timer('hpaprescalercronjobs', interval=20.0) # , initial_delay=25
+def remove_old_prescalers_cronjob(logger, name, namespace, status, spec, **kwargs):
+    logger.info(f"[CronJob] Doing the: HpaPrescalerCronjob({name})")
     
+    # check if the cron job is active
+    if not spec.get('isActive', False):
+        logger.info(f"[CronJob] HpaPrescalerCronjob({name}) is not active, skipping...")
+        return
+    
+    # get the .spec.schedule and .spec.jobCount
+    schedule = spec.get('schedule', False)
+    job_count = spec.get('jobCount', False)
+    
+    if not schedule:
+        logger.error(f"[CronJob] HpaPrescalerCronjob({name}) has no schedule, skipping...")
+        return
+    
+    next_runs = []
+
+    try:
+        # parse the cron schedule and generate datetime objects
+        now = datetime.datetime.now(datetime.timezone.utc).replace(second=0, microsecond=0)
+        cron_schedule = croniter(schedule, now)
+        for _ in range(job_count):
+            next_run = cron_schedule.get_next(datetime.datetime).replace(second=0, microsecond=0)
+            next_runs.append(next_run)
+            
+        logger.info(f"[CronJob] Generated {len(next_runs)} future run times for {name}: {[run.strftime('%Y-%m-%dT%H:%M:%SZ') for run in next_runs]}")
+        
+    except Exception as e:
+        logger.error(f"[CronJob] Failed to parse cron schedule '{schedule}' for {name}: {str(e)}")
+        return
+
+    
+    prescaler_spec = spec.get('prescalerSpec', False)
+    if not prescaler_spec:
+        logger.error(f"[CronJob] HpaPrescalerCronjob({name}) has no prescalerSpec, skipping...")
+        return
+
+    # Prepare prescaler spec with timeStart for each run
+    prescaler_objects = []
+    for run_time in next_runs:
+        prescaler = {
+            'apiVersion': 'hepapi.com/v1',
+            'kind': 'HpaPrescaler',
+            'metadata': {
+                'name': f"cron-{name}--{run_time.strftime('%Y-%m-%d--%H%M')}".lower()[:63].rstrip('-'),
+                'namespace': namespace, 
+                'labels': {
+                    'cronjob': name,
+                    'created-by': 'hpa-prescaler-cronjob'
+                }
+            },
+            'spec': prescaler_spec.copy()
+        }
+        # logger.info(f"[CronJob] Creating prescaler object: {json.dumps(prescaler, indent=2)}")
+        prescaler['spec']['timeStart'] = run_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        prescaler_objects.append(prescaler)
+        
+    # Initialize empty list for pending prescalers that are in the future
+    pending_future_prescalers = []
+    # List all prescaler objects with matching labels
+    try:
+        api = kubernetes.client.CustomObjectsApi()
+        existing_prescalers = api.list_namespaced_custom_object(
+            group="hepapi.com",
+            version="v1",
+            namespace=namespace,
+            plural="hpaprescalers",
+            label_selector=f"cronjob={name},created-by=hpa-prescaler-cronjob"
+        )
+        logger.debug(f"[CronJob] Found {len(existing_prescalers.get('items', []))} existing prescaler objects for {name}")
+
+    except kubernetes.client.exceptions.ApiException as e:
+        logger.error(f"[CronJob] Failed to list existing prescaler objects: {str(e)}")
+        return
+    
+
+    # Filter for only PENDING prescalers
+    now = datetime.datetime.now(datetime.timezone.utc)
+    pending_future_prescalers = []
+    for p in existing_prescalers.get('items', []):
+        if (p.get('status', {}).get('state') == OP_STATE.PENDING.value and 
+            parser.parse(p.get('spec', {}).get('timeStart', '')) > now):
+            pending_future_prescalers.append(p)
+            
+    logger.info(f"[CronJob] Found {len(pending_future_prescalers)} pending future prescaler objects for {name}")
+    # Get target times from pending prescalers, strip seconds
+    pending_times = set()
+    for p in pending_future_prescalers:
+        time_start = p.get('spec', {}).get('timeStart')
+        if time_start:
+            dt = parser.parse(time_start).replace(second=0, microsecond=0)
+            pending_times.add(dt.strftime('%Y-%m-%dT%H:%M:%SZ'))
+
+    # Convert next_runs to set of formatted strings for comparison
+    target_times = {run_time.strftime('%Y-%m-%dT%H:%M:%SZ') for run_time in next_runs}
+
+    # Find which times need new prescaler objects
+    times_needing_prescalers = target_times - pending_times
+
+    logger.info(f"[CronJob] Need to create prescalers for {len(times_needing_prescalers)} times: {times_needing_prescalers}")
+
+    # Create prescaler objects for missing times
+    for prescaler in prescaler_objects:
+        if prescaler['spec']['timeStart'] in times_needing_prescalers:
+            try:
+                # Add kind field to prescaler object
+                
+                api.create_namespaced_custom_object(
+                    group="hepapi.com",
+                    version="v1", 
+                    namespace=namespace,
+                    plural="hpaprescalers",
+                    body=prescaler
+                )
+                logger.info(f"[CronJob] Created prescaler {prescaler['metadata']['name']}")
+            except kubernetes.client.exceptions.ApiException as e:
+                if e.status == 409:  # Conflict - object already exists
+                    logger.warning(f"[CronJob] Prescaler {prescaler['metadata']['name']} already exists")
+                else:
+                    logger.error(f"[CronJob] Failed to create prescaler {prescaler['metadata']['name']}: {str(e)}")
+
+
+
+
+
+
+# ---- HPA PRESCALER FUNCTIONS ----
+
 def get_algorithm(name):
     # must return a function that takes 2 args: target_time_iso8601, grace_minutes
     # and returns a TimeStatus object
@@ -376,7 +514,6 @@ def health_check_probe(logger, **kwargs):
         raise kopf.TemporaryError("[HealthCheck] failed service unavailable", delay=on_failure_delay)
     
 
-
 @kopf.on.startup()
 def configure(settings: kopf.OperatorSettings, **_):
     # """disable event posting with logs"""
@@ -418,8 +555,6 @@ def create_kubernetes_event(namespace, event_type, regarding_prescaler_name, act
     except ApiException as e:
         logger.error("Exception when creating K8s Event: %s\n" % e)
         return False
-
-
 
 
 @kopf.on.delete('hpaprescalers')
