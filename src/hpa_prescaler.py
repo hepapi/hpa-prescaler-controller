@@ -72,7 +72,7 @@ class OP_STATE(Enum):
 
 
 @kopf.timer('hpaprescalercronjobs', interval=20.0) # , initial_delay=25
-def remove_old_prescalers_cronjob(logger, name, namespace, status, spec, **kwargs):
+def monitor_prescalers_cronjob(logger, name, namespace, status, spec, **kwargs):
     logger.info(f"[CronJob] Doing the: HpaPrescalerCronjob({name})")
     
     # check if the cron job is active
@@ -98,7 +98,7 @@ def remove_old_prescalers_cronjob(logger, name, namespace, status, spec, **kwarg
             next_run = cron_schedule.get_next(datetime.datetime).replace(second=0, microsecond=0)
             next_runs.append(next_run)
             
-        logger.info(f"[CronJob] Generated {len(next_runs)} future run times for {name}: {[run.strftime('%Y-%m-%dT%H:%M:%SZ') for run in next_runs]}")
+        logger.info(f"[CronJob] Generated {len(next_runs)} future run times for {name}: {', '.join([run.strftime('%Y-%m-%dT%H:%M:%SZ') for run in next_runs])}")
         
     except Exception as e:
         logger.error(f"[CronJob] Failed to parse cron schedule '{schedule}' for {name}: {str(e)}")
@@ -172,8 +172,10 @@ def remove_old_prescalers_cronjob(logger, name, namespace, status, spec, **kwarg
     # Find which times need new prescaler objects
     times_needing_prescalers = target_times - pending_times
 
-    logger.info(f"[CronJob] Need to create prescalers for {len(times_needing_prescalers)} times: {times_needing_prescalers}")
+    logger.info(f"[CronJobDEBUG]  target_times {target_times} pending_times {pending_times} times_needing_prescalers {times_needing_prescalers}")
+    logger.info(f"[CronJob] Need to create prescalers for {len(times_needing_prescalers)} times: {', '.join(times_needing_prescalers)}")
 
+    times_needing_prescalers = list(times_needing_prescalers)
     # Create prescaler objects for missing times
     for prescaler in prescaler_objects:
         if prescaler['spec']['timeStart'] in times_needing_prescalers:
@@ -186,6 +188,7 @@ def remove_old_prescalers_cronjob(logger, name, namespace, status, spec, **kwarg
                     namespace=namespace,
                     plural="hpaprescalers",
                     body=prescaler
+                    # TODO add labels
                 )
                 logger.info(f"[CronJob] Created prescaler {prescaler['metadata']['name']}")
             except kubernetes.client.exceptions.ApiException as e:

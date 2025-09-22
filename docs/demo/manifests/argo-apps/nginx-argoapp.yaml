@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: nginx1
+  name: nginx-app
 spec:
   project: default
   source:

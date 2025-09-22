@@ -1,0 +1,13 @@
+[project]
+name = "hpa-prescaler-controller"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "croniter>=6.0.0",
+    "kopf>=1.38.0",
+    "kubernetes>=33.1.0",
+    "python-dateutil>=2.9.0.post0",
+    "requests>=2.32.5",
+]
