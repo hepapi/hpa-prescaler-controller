@@ -38,7 +38,7 @@ def get_argocd_app(app_name, logger):
     try:
         response = requests.get(f"{_get_app_endpoint}{qparams}", headers=_headers, cookies=_cookies, verify=ARGOCD_SSL_VERIFY)
     except requests.exceptions.ConnectionError:
-        logger.error(f"Connection Error when querying ArgoCD api for App({app_name}). Message: {response.text}")
+        logger.error(f"Connection Error when querying ArgoCD api for App({app_name})")
         return False, ArgoAppUpdateStatus.ARGO_CONNECTION_FAILED       
 
         
