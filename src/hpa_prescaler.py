@@ -71,13 +71,74 @@ class OP_STATE(Enum):
 
 
 
+def _cleanup_pending_prescalers(name, namespace, logger):
+    """Deletes all future PENDING HpaPrescaler objects for a given cronjob."""
+    logger.info(f"Cleaning up future PENDING prescalers for HpaPrescalerCronjob({name}).")
+    try:
+        existing_prescalers = api.list_namespaced_custom_object(
+            group="hepapi.com",
+            version="v1",
+            namespace=namespace,
+            plural="hpaprescalers",
+            label_selector=f"cronjob={name},created-by=hpa-prescaler-cronjob"
+        )
+    except ApiException as e:
+        logger.error(f"[CronJob Cleanup] Failed to list existing prescaler objects for cronjob {name}: {str(e)}")
+        # We can re-raise a temporary error to retry later.
+        raise kopf.TemporaryError(f"Failed to list prescalers for cronjob {name}", delay=15)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    deleted_count = 0
+    for p in existing_prescalers.get('items', []):
+        prescaler_name = p.get('metadata', {}).get('name')
+        try:
+            is_pending = p.get('status', {}).get('state') == OP_STATE.PENDING.value
+            time_start_str = p.get('spec', {}).get('timeStart')
+            if not time_start_str:
+                continue
+            
+            is_future = parser.parse(time_start_str) > now
+
+            if is_pending and is_future:
+                logger.info(f"[CronJob Cleanup] Deleting future PENDING prescaler {prescaler_name} for cronjob {name}")
+                api.delete_namespaced_custom_object(
+                    group="hepapi.com",
+                    version='v1',
+                    namespace=namespace,
+                    plural="hpaprescalers",
+                    name=prescaler_name
+                )
+                deleted_count += 1
+        except ApiException as e:
+            if e.status == 404: # Not Found
+                logger.warning(f"[CronJob Cleanup] Prescaler {prescaler_name} was already deleted.")
+            else:
+                logger.error(f"[CronJob Cleanup] Failed to delete prescaler {prescaler_name} for cronjob {name}: {str(e)}")
+        except Exception as e:
+            logger.error(f"[CronJob Cleanup] Failed to process prescaler {prescaler_name} for cronjob {name}: {str(e)}")
+    
+    if deleted_count > 0:
+        logger.info(f"[CronJob Cleanup] Deleted {deleted_count} future PENDING prescalers for cronjob {name}.")
+    else:
+        logger.info(f"[CronJob Cleanup] No future PENDING prescalers found to delete for cronjob {name}.")
+
+
+@kopf.on.field('hpaprescalercronjobs', field='spec.isActive')
+def cronjob_is_active_changed(old, new, name, spec, status, namespace, logger, **kwargs):
+    logger.info(f"HpaPrescalerCronjob({name}) spec.isActive changed from {old} to {new}")
+    if new is False:
+        _cleanup_pending_prescalers(name, namespace, logger)
+
+
 @kopf.timer('hpaprescalercronjobs', interval=20.0) # , initial_delay=25
 def monitor_prescalers_cronjob(logger, name, namespace, status, spec, **kwargs):
+    """This function will run for all HpaPrescalerCronjob objects"""
     logger.info(f"[CronJob] Doing the: HpaPrescalerCronjob({name})")
     
     # check if the cron job is active
     if not spec.get('isActive', False):
-        logger.info(f"[CronJob] HpaPrescalerCronjob({name}) is not active, skipping...")
+        logger.info(f"[CronJob] HpaPrescalerCronjob({name}) is not active, cleaning up any pending prescalers and skipping...")
+        _cleanup_pending_prescalers(name, namespace, logger)
         return
     
     # get the .spec.schedule and .spec.jobCount
@@ -110,9 +171,10 @@ def monitor_prescalers_cronjob(logger, name, namespace, status, spec, **kwargs):
         logger.error(f"[CronJob] HpaPrescalerCronjob({name}) has no prescalerSpec, skipping...")
         return
 
-    # Prepare prescaler spec with timeStart for each run
-    prescaler_objects = []
+    # Prepare a hashtable of prescaler objects to be created, keyed by timeStart
+    target_prescalers = {}
     for run_time in next_runs:
+        time_start_str = run_time.strftime('%Y-%m-%dT%H:%M:%SZ')
         prescaler = {
             'apiVersion': 'hepapi.com/v1',
             'kind': 'HpaPrescaler',
@@ -126,69 +188,59 @@ def monitor_prescalers_cronjob(logger, name, namespace, status, spec, **kwargs):
             },
             'spec': prescaler_spec.copy()
         }
-        # logger.info(f"[CronJob] Creating prescaler object: {json.dumps(prescaler, indent=2)}")
-        prescaler['spec']['timeStart'] = run_time.strftime('%Y-%m-%dT%H:%M:%SZ')
-        prescaler_objects.append(prescaler)
+        prescaler['spec']['timeStart'] = time_start_str
+        target_prescalers[time_start_str] = prescaler
         
-    # Initialize empty list for pending prescalers that are in the future
-    pending_future_prescalers = []
     # List all prescaler objects with matching labels
     try:
         api = kubernetes.client.CustomObjectsApi()
-        existing_prescalers = api.list_namespaced_custom_object(
+        existing_prescalers_list = api.list_namespaced_custom_object(
             group="hepapi.com",
             version="v1",
             namespace=namespace,
             plural="hpaprescalers",
             label_selector=f"cronjob={name},created-by=hpa-prescaler-cronjob"
         )
-        logger.debug(f"[CronJob] Found {len(existing_prescalers.get('items', []))} existing prescaler objects for {name}")
+        logger.debug(f"[CronJob] Found {len(existing_prescalers_list.get('items', []))} existing prescaler objects for {name}")
 
     except kubernetes.client.exceptions.ApiException as e:
         logger.error(f"[CronJob] Failed to list existing prescaler objects: {str(e)}")
         return
     
-
-    # Filter for only PENDING prescalers
+    # Create a hashtable of existing PENDING prescalers, keyed by timeStart
     now = datetime.datetime.now(datetime.timezone.utc)
-    pending_future_prescalers = []
-    for p in existing_prescalers.get('items', []):
-        if (p.get('status', {}).get('state') == OP_STATE.PENDING.value and 
-            parser.parse(p.get('spec', {}).get('timeStart', '')) > now):
-            pending_future_prescalers.append(p)
-            
-    logger.info(f"[CronJob] Found {len(pending_future_prescalers)} pending future prescaler objects for {name}")
-    # Get target times from pending prescalers, strip seconds
-    pending_times = set()
-    for p in pending_future_prescalers:
+    existing_pending_prescalers = {}
+    for p in existing_prescalers_list.get('items', []):
         time_start = p.get('spec', {}).get('timeStart')
-        if time_start:
+        if (time_start and
+            p.get('status', {}).get('state') == OP_STATE.PENDING.value and 
+            parser.parse(time_start) > now):
+            
             dt = parser.parse(time_start).replace(second=0, microsecond=0)
-            pending_times.add(dt.strftime('%Y-%m-%dT%H:%M:%SZ'))
+            time_start_str = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+            existing_pending_prescalers[time_start_str] = p
+            
+    logger.info(f"[CronJob] Found {len(existing_pending_prescalers)} pending future prescaler objects for {name}")
 
-    # Convert next_runs to set of formatted strings for comparison
-    target_times = {run_time.strftime('%Y-%m-%dT%H:%M:%SZ') for run_time in next_runs}
+    # Determine which prescalers to create
+    prescalers_to_create = []
+    for time_start, prescaler_body in target_prescalers.items():
+        if time_start not in existing_pending_prescalers:
+            prescalers_to_create.append(prescaler_body)
 
-    # Find which times need new prescaler objects
-    times_needing_prescalers = target_times - pending_times
-
-    logger.info(f"[CronJobDEBUG]  target_times {target_times} pending_times {pending_times} times_needing_prescalers {times_needing_prescalers}")
-    logger.info(f"[CronJob] Need to create prescalers for {len(times_needing_prescalers)} times: {', '.join(times_needing_prescalers)}")
-
-    times_needing_prescalers = list(times_needing_prescalers)
-    # Create prescaler objects for missing times
-    for prescaler in prescaler_objects:
-        if prescaler['spec']['timeStart'] in times_needing_prescalers:
+    if prescalers_to_create:
+        times_to_create = [p['spec']['timeStart'] for p in prescalers_to_create]
+        logger.info(f"[CronJob] Need to create {len(prescalers_to_create)} prescalers for times: {', '.join(times_to_create)}")
+        
+        # Create prescaler objects for missing times
+        for prescaler in prescalers_to_create:
             try:
-                # Add kind field to prescaler object
-                
                 api.create_namespaced_custom_object(
                     group="hepapi.com",
                     version="v1", 
                     namespace=namespace,
                     plural="hpaprescalers",
                     body=prescaler
-                    # TODO add labels
                 )
                 logger.info(f"[CronJob] Created prescaler {prescaler['metadata']['name']}")
             except kubernetes.client.exceptions.ApiException as e:
@@ -196,6 +248,8 @@ def monitor_prescalers_cronjob(logger, name, namespace, status, spec, **kwargs):
                     logger.warning(f"[CronJob] Prescaler {prescaler['metadata']['name']} already exists")
                 else:
                     logger.error(f"[CronJob] Failed to create prescaler {prescaler['metadata']['name']}: {str(e)}")
+    else:
+        logger.info(f"[CronJob] No new prescalers to create.")
 
 
 
