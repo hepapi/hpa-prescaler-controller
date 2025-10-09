@@ -128,6 +128,13 @@ def _cleanup_pending_cronjob_prescalers(name, namespace, logger):
         logger.debug(f"[Cleanup] No future PENDING prescalers found to delete for cronjob {name}.")
 
 
+@kopf.on.delete('hpaprescalercronjobs')
+def delete_hpaprescalercronjob(name, namespace, spec, status, logger, **kwargs):
+    # this function is needed for Finalizers to be removed correctly
+    logger.info(f"Deleting HpaPrescalerCronjob: {name}")
+    _cleanup_pending_cronjob_prescalers(name, namespace, logger)
+
+
 @kopf.on.field('hpaprescalercronjobs', field='spec.isActive')
 def cronjob_is_active_changed(old, new, name, spec, status, namespace, logger, **kwargs):
     if new is False:
@@ -629,6 +636,7 @@ def create_kubernetes_event(namespace, event_type, regarding_prescaler_name, act
 def delete_hpaprescaler(name, spec, status, logger, **kwargs):
     # this function is needed for Finalizers to be removed correctly
     logger.info(f"Deleting HpaPrescaler object: {json.dumps({'name': name, 'spec': spec, 'status': status}, default=str)}")
+
 
 
 @kopf.on.create('hpaprescalers')
