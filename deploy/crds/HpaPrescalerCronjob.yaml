@@ -41,8 +41,8 @@ spec:
                   properties:
                     argocdAppName:
                       type: string
-                    timeStart:
-                      type: string
+                    # timeStart:  
+                    #   type: string
                     targetProfileName:
                       type: string
                     scaleType:
