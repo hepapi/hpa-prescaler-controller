@@ -1,0 +1,24 @@
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerProfile
+metadata:
+  name: high-traffic-profile
+spec:
+  minReplicas: 1
+  maxReplicas: 3
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerProfile
+metadata:
+  name: low-traffic-profile
+spec:
+  minReplicas: 1
+  maxReplicas: 3
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerProfile
+metadata:
+  name: business-hours-profile
+spec:
+  minReplicas: 1
+  maxReplicas: 3

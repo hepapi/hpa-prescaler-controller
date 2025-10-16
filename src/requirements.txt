@@ -2,3 +2,4 @@ python-dateutil
 kopf
 kubernetes
 requests
+croniter

@@ -56,6 +56,7 @@ argocd account generate-token --account hpaprescaler
 ```
 kubectl apply -f https://raw.githubusercontent.com/hepapi/hpa-prescaler-controller/main/deploy/crds/HpaPrescaler.yaml
 kubectl apply -f https://raw.githubusercontent.com/hepapi/hpa-prescaler-controller/main/deploy/crds/HpaPrescalerProfile.yaml
+kubectl apply -f https://raw.githubusercontent.com/hepapi/hpa-prescaler-controller/main/deploy/crds/HpaPrescalerCronjob.yaml
 ```
 
 

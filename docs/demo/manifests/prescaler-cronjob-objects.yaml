@@ -1,0 +1,75 @@
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerCronjob
+metadata:
+  name: daily-morning-scaleup
+  namespace: default
+spec:
+  isActive: true
+  schedule: "0 8 * * *"  # Daily at 8:00 AM
+  jobCount: 3
+  prescalerSpec:
+    argocdAppName: nginx-app
+    timeStart: "2024-01-15T08:00:00Z"
+    targetProfileName: "high-traffic-profile"
+    scaleType: "UP"
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerCronjob
+metadata:
+  name: every-two-minutes
+  namespace: default
+spec:
+  isActive: true
+  schedule: "*/2 * * * *"  # Every 2 minutes
+  jobCount: 6
+  prescalerSpec:
+    argocdAppName: nginx-app
+    timeStart: "2024-01-15T08:00:00Z"
+    targetProfileName: "high-traffic-profile"
+    scaleType: "UP"
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerCronjob
+metadata:
+  name: nightly-scale-down
+  namespace: default
+spec:
+  isActive: true
+  schedule: "0 22 * * *"  # Daily at 10:00 PM
+  jobCount: 1
+  prescalerSpec:
+    argocdAppName: nginx-app
+    timeStart: "2024-01-15T22:00:00Z"
+    targetProfileName: "low-traffic-profile"
+    scaleType: "DOWN"
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerCronjob
+metadata:
+  name: weekend-maintenance
+  namespace: default
+spec:
+  isActive: false  # Disabled for now
+  schedule: "0 2 * * 0"  # Every Sunday at 2:00 AM
+  jobCount: 2
+  prescalerSpec:
+    argocdAppName: maintenance-app
+    timeStart: "2024-01-21T02:00:00Z"
+    targetProfileName: "maintenance-profile"
+    scaleType: "DOWN"
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescalerCronjob
+metadata:
+  name: business-hours-scaleup
+  namespace: default
+spec:
+  isActive: true
+  schedule: "0 9 * * 1-5"  # Weekdays at 9:00 AM
+  jobCount: 5
+  prescalerSpec:
+    argocdAppName: business-app
+    timeStart: "2024-01-15T09:00:00Z"
+    targetProfileName: "business-hours-profile"
+    scaleType: "UP" 
