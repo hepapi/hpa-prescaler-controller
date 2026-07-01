@@ -53,22 +53,34 @@ def get_argocd_app(app_name, logger):
     return argo_apps[0], ArgoAppUpdateStatus.SUCCESS
 
 
-def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config,logger):
-    
-    has_helm_parameters_def = app_spec['source'].get('helm', {}).get('parameters',False) != False
+def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config, logger):
+    has_helm_parameters_def = app_spec['source'].get('helm', {}).get('parameters', False) != False
     has_helm_def = app_spec['source'].get('helm', False)
-
-
     _default_autoscale_helm_params = [
-        {'name': 'autoscaling.enabled', 'value': 'true'}, 
-        {'name': 'autoscaling.minReplicas', 'value': False}, 
+        {'name': 'autoscaling.enabled', 'value': 'true'},
+        {'name': 'autoscaling.minReplicas', 'value': False},
         {'name': 'autoscaling.maxReplicas', 'value': False}
     ]
-
     if has_helm_def:
         if has_helm_parameters_def:
-            existing_parameter_names = (_.get('name') for _ in app_spec['source']['helm']['parameters'])
+            existing_parameters = app_spec['source']['helm']['parameters']
+
+            # De-duplicate: keep only the first occurrence of each param name
+            deduped_parameters = []
+            seen_names = set()
+            for _p in existing_parameters:
+                _name = _p.get('name')
+                if _name not in seen_names:
+                    seen_names.add(_name)
+                    deduped_parameters.append(_p)
+            app_spec['source']['helm']['parameters'] = deduped_parameters
+            existing_parameters = deduped_parameters
+
+            # Build a real lookup (set), not an exhausted generator
+            existing_parameter_names = {p.get('name') for p in existing_parameters}
+
             for _a_helm_param in _default_autoscale_helm_params:
+                # lookup by name instead of looping
                 is_already_in_params = _a_helm_param['name'] in existing_parameter_names
                 if not is_already_in_params:
                     app_spec['source']['helm']['parameters'].append(_a_helm_param)
@@ -77,43 +89,35 @@ def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config
             app_spec['source']['helm']['parameters'] = _default_autoscale_helm_params
     else:
         logger.info(f"ArgoApp({app_name}) DOES NOT HAVE .source.helm definition, adding it now.")
-        app_spec['source']['helm'] = {'parameters':  _default_autoscale_helm_params}
+        app_spec['source']['helm'] = {'parameters': _default_autoscale_helm_params}
 
     helm_parameters = app_spec['source']['helm']['parameters']
     _done_max_replicas = False
     _done_min_replicas = False
-    
     min_hpa_conf = str(new_hpa_config['minReplicas'])
     max_hpa_conf = str(new_hpa_config['maxReplicas'])
-    
     for helm_p in helm_parameters:
         if helm_p['name'] == 'autoscaling.maxReplicas':
-            helm_p['value'] = max_hpa_conf 
+            helm_p['value'] = max_hpa_conf
             _done_max_replicas = True
-    
         if helm_p['name'] == 'autoscaling.minReplicas':
             helm_p['value'] = min_hpa_conf
             _done_min_replicas = True
-    
     if not _done_min_replicas:
         helm_parameters.append({'name': 'autoscaling.minReplicas', 'value': min_hpa_conf})
         logger.info(f"ArgoApp({app_name}) doesn't have autoscaling.minReplicas set, setting it to: {min_hpa_conf}")
-    
-    if not _done_min_replicas:
+    if not _done_max_replicas:
         helm_parameters.append({'name': 'autoscaling.maxReplicas', 'value': max_hpa_conf})
         logger.info(f"ArgoApp({app_name}) doesn't have autoscaling.maxReplicas set, setting it to: {max_hpa_conf}")
 
-    
     # app_spec.destination -> should have only one server or name
-    # otherwise ArgoCD API will error: ''spec is invalid: application destination can't have both name and server defined''
+    # otherwise ArgoCD API will error: 'spec is invalid: application destination can't have both name and server defined'
     if 'server' in app_spec['destination']:
         if 'name' in app_spec['destination']:
             logger.info(f'ArgoApp({app_name}) .spec.destination has .server and .name defined in it. Removing .server definition.')
             app_spec['destination'].pop('server')
             logger.info(f"ArgoApp({app_name}) Updated .destination: {app_spec['destination']}")
-
     return app_spec
-
 
 def update_argocd_app(app_name, new_hpa_config, logger):
     _app_spec_update_endpoint=f"{ARGOCD_ENDPOINT}/api/v1/applications/{app_name}/spec"
