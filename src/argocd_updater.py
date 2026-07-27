@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Optional
 import requests
 import os 
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -17,6 +17,7 @@ class ArgoAppUpdateStatus(Enum):
     APP_NOT_FOUND = "Argo App not found"
     APP_NOT_UPDATED = "Argo App update failed"
     SYNC_FAILED = "Argo App Sync failed"
+    NO_HELM_SOURCE = "Argo App has no usable helm source"
        
        
 _headers = {
@@ -30,6 +31,19 @@ _cookies = { "argocd.token": ARGOCD_TOKEN }
 if not ARGOCD_SSL_VERIFY:
     # Disable SSL warnings if SSL Verification is disabled
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+
+_DEFAULT_AUTOSCALE_HELM_PARAMS = [
+    {'name': 'autoscaling.enabled', 'value': 'true'},
+    {'name': 'autoscaling.minReplicas', 'value': False},
+    {'name': 'autoscaling.maxReplicas', 'value': False},
+]
+
+_AUTOSCALE_PARAM_NAMES = {
+    'autoscaling.enabled',
+    'autoscaling.minReplicas',
+    'autoscaling.maxReplicas',
+}
 
 
 def get_argocd_app(app_name, logger):
@@ -53,17 +67,63 @@ def get_argocd_app(app_name, logger):
     return argo_apps[0], ArgoAppUpdateStatus.SUCCESS
 
 
-def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config, logger):
-    has_helm_parameters_def = app_spec['source'].get('helm', {}).get('parameters', False) != False
-    has_helm_def = app_spec['source'].get('helm', False)
-    _default_autoscale_helm_params = [
-        {'name': 'autoscaling.enabled', 'value': 'true'},
-        {'name': 'autoscaling.minReplicas', 'value': False},
-        {'name': 'autoscaling.maxReplicas', 'value': False}
-    ]
+def _source_param_names(source: Dict) -> set:
+    params = (source.get('helm') or {}).get('parameters') or []
+    return {p.get('name') for p in params if p.get('name')}
+
+
+def _is_ref_only_values_source(source: Dict) -> bool:
+    """Values-repo source used only as `$ref` for valueFiles (no chart render)."""
+    return bool(source.get('ref')) and not source.get('chart') and 'helm' not in source
+
+
+def find_helm_source(app_spec: Dict) -> Optional[Dict]:
+    """
+    Return the mutable source dict that should receive HPA helm parameters.
+
+    Supports:
+      - classic single-source apps: spec.source
+      - multi-source apps: spec.sources[] (pick the actual helm/chart source,
+        not a ref-only values repository)
+    """
+    sources = app_spec.get('sources')
+    if sources:
+        # Prefer source that already carries autoscaling helm parameters
+        for src in sources:
+            if _source_param_names(src) & _AUTOSCALE_PARAM_NAMES:
+                return src
+
+        # Prefer an explicit helm block or a chart source
+        for src in sources:
+            if src.get('helm') is not None or src.get('chart'):
+                return src
+
+        # Prefer a path-based source that is not ref-only (chart directory)
+        for src in sources:
+            if src.get('path') and not _is_ref_only_values_source(src):
+                return src
+
+        # Last resort: first non ref-only source
+        for src in sources:
+            if not _is_ref_only_values_source(src):
+                return src
+
+        return None
+
+    # Classic single-source Application
+    if 'source' not in app_spec or app_spec['source'] is None:
+        app_spec['source'] = {}
+    return app_spec['source']
+
+
+def _ensure_helm_parameters_on_source(app_name, source: Dict, logger) -> list:
+    """Ensure source.helm.parameters exists (deduped, with default autoscale keys)."""
+    has_helm_def = source.get('helm', False)
+    has_helm_parameters_def = (source.get('helm') or {}).get('parameters', False) != False
+
     if has_helm_def:
         if has_helm_parameters_def:
-            existing_parameters = app_spec['source']['helm']['parameters']
+            existing_parameters = source['helm']['parameters']
 
             # De-duplicate: keep only the first occurrence of each param name
             deduped_parameters = []
@@ -73,25 +133,24 @@ def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config
                 if _name not in seen_names:
                     seen_names.add(_name)
                     deduped_parameters.append(_p)
-            app_spec['source']['helm']['parameters'] = deduped_parameters
+            source['helm']['parameters'] = deduped_parameters
             existing_parameters = deduped_parameters
 
-            # Build a real lookup (set), not an exhausted generator
             existing_parameter_names = {p.get('name') for p in existing_parameters}
-
-            for _a_helm_param in _default_autoscale_helm_params:
-                # lookup by name instead of looping
-                is_already_in_params = _a_helm_param['name'] in existing_parameter_names
-                if not is_already_in_params:
-                    app_spec['source']['helm']['parameters'].append(_a_helm_param)
+            for _a_helm_param in _DEFAULT_AUTOSCALE_HELM_PARAMS:
+                if _a_helm_param['name'] not in existing_parameter_names:
+                    source['helm']['parameters'].append(_a_helm_param)
         else:
-            logger.info(f"ArgoApp({app_name}) DOES NOT HAVE .source.helm.parameters definition, adding it now.")
-            app_spec['source']['helm']['parameters'] = _default_autoscale_helm_params
+            logger.info(f"ArgoApp({app_name}) DOES NOT HAVE helm.parameters definition, adding it now.")
+            source['helm']['parameters'] = list(_DEFAULT_AUTOSCALE_HELM_PARAMS)
     else:
-        logger.info(f"ArgoApp({app_name}) DOES NOT HAVE .source.helm definition, adding it now.")
-        app_spec['source']['helm'] = {'parameters': _default_autoscale_helm_params}
+        logger.info(f"ArgoApp({app_name}) DOES NOT HAVE helm definition on selected source, adding it now.")
+        source['helm'] = {'parameters': list(_DEFAULT_AUTOSCALE_HELM_PARAMS)}
 
-    helm_parameters = app_spec['source']['helm']['parameters']
+    return source['helm']['parameters']
+
+
+def _apply_hpa_values_to_parameters(app_name, helm_parameters: list, new_hpa_config, logger) -> None:
     _done_max_replicas = False
     _done_min_replicas = False
     min_hpa_conf = str(new_hpa_config['minReplicas'])
@@ -110,13 +169,35 @@ def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config
         helm_parameters.append({'name': 'autoscaling.maxReplicas', 'value': max_hpa_conf})
         logger.info(f"ArgoApp({app_name}) doesn't have autoscaling.maxReplicas set, setting it to: {max_hpa_conf}")
 
+
+def _normalize_destination(app_name, app_spec: Dict, logger) -> None:
     # app_spec.destination -> should have only one server or name
     # otherwise ArgoCD API will error: 'spec is invalid: application destination can't have both name and server defined'
-    if 'server' in app_spec['destination']:
-        if 'name' in app_spec['destination']:
-            logger.info(f'ArgoApp({app_name}) .spec.destination has .server and .name defined in it. Removing .server definition.')
-            app_spec['destination'].pop('server')
-            logger.info(f"ArgoApp({app_name}) Updated .destination: {app_spec['destination']}")
+    destination = app_spec.get('destination') or {}
+    if 'server' in destination and 'name' in destination:
+        logger.info(f'ArgoApp({app_name}) .spec.destination has .server and .name defined in it. Removing .server definition.')
+        destination.pop('server')
+        logger.info(f"ArgoApp({app_name}) Updated .destination: {destination}")
+
+
+def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config, logger):
+    source = find_helm_source(app_spec)
+    if source is None:
+        logger.error(
+            f"ArgoApp({app_name}) has spec.sources but no usable helm/chart source to update"
+        )
+        raise ValueError(f"ArgoApp({app_name}) has no usable helm source")
+
+    sources = app_spec.get('sources')
+    if sources:
+        logger.info(
+            f"ArgoApp({app_name}) uses multi-source spec; updating helm source "
+            f"repoURL={source.get('repoURL')} path={source.get('path')} chart={source.get('chart')}"
+        )
+
+    helm_parameters = _ensure_helm_parameters_on_source(app_name, source, logger)
+    _apply_hpa_values_to_parameters(app_name, helm_parameters, new_hpa_config, logger)
+    _normalize_destination(app_name, app_spec, logger)
     return app_spec
 
 def update_argocd_app(app_name, new_hpa_config, logger):
@@ -129,7 +210,10 @@ def update_argocd_app(app_name, new_hpa_config, logger):
         return False, _get_app_status
     
     app_spec = app_data.get('spec')
-    new_app_spec = update_app_spec_with_new_hpa_config(app_name, app_spec, new_hpa_config, logger)
+    try:
+        new_app_spec = update_app_spec_with_new_hpa_config(app_name, app_spec, new_hpa_config, logger)
+    except ValueError:
+        return False, ArgoAppUpdateStatus.NO_HELM_SOURCE
     
     try:
         logger.debug(f"Updating ArgoCD App({app_name}) .spec with new HPA config: {json.dumps(new_app_spec)}")

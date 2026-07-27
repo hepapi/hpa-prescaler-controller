@@ -1,0 +1,33 @@
+# Plain Argo CD Application using the local demo-app helm chart (file:///demo-charts)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-app
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: file:///demo-charts
+    path: demo-app
+    targetRevision: HEAD
+    helm:
+      parameters:
+        - name: nameOverride
+          value: demo-app
+        - name: autoscaling.enabled
+          value: "true"
+        - name: autoscaling.minReplicas
+          value: "1"
+        - name: autoscaling.maxReplicas
+          value: "2"
+  destination:
+    name: in-cluster
+    namespace: demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
