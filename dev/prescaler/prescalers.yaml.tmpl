@@ -1,0 +1,30 @@
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescaler
+metadata:
+  name: demo-prescaler-app
+  namespace: default
+spec:
+  argocdAppName: demo-app
+  timeStart: "__TIME_START__"
+  targetProfileName: demo-scale-up
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescaler
+metadata:
+  name: demo-prescaler-appset-a
+  namespace: default
+spec:
+  argocdAppName: demo-appset-a
+  timeStart: "__TIME_START__"
+  targetProfileName: demo-scale-up
+---
+apiVersion: hepapi.com/v1
+kind: HpaPrescaler
+metadata:
+  name: demo-prescaler-appset-b
+  namespace: default
+spec:
+  argocdAppName: demo-appset-b
+  timeStart: "__TIME_START__"
+  targetProfileName: demo-scale-up

@@ -1,0 +1,22 @@
+# kind cluster config for local development (macOS + Docker Desktop / OrbStack / Colima)
+# Docs: https://kind.sigs.k8s.io/docs/user/configuration/
+#
+# __CHARTS_HOST_PATH__ is replaced by `just kind-create` with an absolute path to
+# dev/charts so Argo CD can sync the local demo helm chart via file:///demo-charts
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: hpa-prescaler
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: __CHARTS_HOST_PATH__
+        containerPath: /demo-charts
+        readOnly: true
+    # Host ports avoid 8080 (used by local kopf liveness in `just run`)
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 18080
+        protocol: TCP
+      - containerPort: 30443
+        hostPort: 18443
+        protocol: TCP
