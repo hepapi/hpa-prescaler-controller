@@ -8,7 +8,11 @@ import unittest
 # Allow importing modules from src/ when run directly or via unittest discovery
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from argocd_updater import find_helm_source, update_app_spec_with_new_hpa_config
+from argocd_updater import (
+    ArgoAppUpdateStatus,
+    find_helm_source,
+    update_app_spec_with_new_hpa_config,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("test")
@@ -186,6 +190,42 @@ class TestUpdateAppSpecWithNewHpaConfig(unittest.TestCase):
         self.assertEqual(values["autoscaling.minReplicas"], "2")
         self.assertEqual(values["autoscaling.maxReplicas"], "4")
         self.assertNotIn("helm", result["sources"][0])
+
+    def test_missing_spec_behaves_like_empty_spec(self):
+        result = update_app_spec_with_new_hpa_config(
+            "missing-spec", None, {"minReplicas": 2, "maxReplicas": 4}, logger
+        )
+
+        self.assertIn("source", result)
+        values = _param_values(result)
+        self.assertEqual(values["autoscaling.minReplicas"], "2")
+        self.assertEqual(values["autoscaling.maxReplicas"], "4")
+
+    def test_non_dict_source_is_rejected_without_keyerror_shape(self):
+        app_spec = {"source": "not-a-dict", "destination": {"name": "in-cluster"}}
+
+        with self.assertRaises(ValueError):
+            update_app_spec_with_new_hpa_config(
+                "bad-source", app_spec, {"minReplicas": 2, "maxReplicas": 4}, logger
+            )
+
+    def test_non_dict_sources_entries_are_ignored(self):
+        app_spec = {
+            "sources": [
+                "bad-entry",
+                {"ref": "values", "repoURL": "https://github.com/org/values.git"},
+                {"path": "charts/demo-app"},
+            ],
+            "destination": {"name": "in-cluster"},
+        }
+
+        result = update_app_spec_with_new_hpa_config(
+            "bad-sources-entry", app_spec, {"minReplicas": 2, "maxReplicas": 4}, logger
+        )
+
+        values = _param_values_from_source(result["sources"][2])
+        self.assertEqual(values["autoscaling.minReplicas"], "2")
+        self.assertEqual(values["autoscaling.maxReplicas"], "4")
 
 
 if __name__ == "__main__":

@@ -77,7 +77,7 @@ def _is_ref_only_values_source(source: Dict) -> bool:
     return bool(source.get('ref')) and not source.get('chart') and 'helm' not in source
 
 
-def find_helm_source(app_spec: Dict) -> Optional[Dict]:
+def find_helm_source(app_spec: Optional[Dict]) -> Optional[Dict]:
     """
     Return the mutable source dict that should receive HPA helm parameters.
 
@@ -86,34 +86,43 @@ def find_helm_source(app_spec: Dict) -> Optional[Dict]:
       - multi-source apps: spec.sources[] (pick the actual helm/chart source,
         not a ref-only values repository)
     """
+    if app_spec is None:
+        return {}
+    if not isinstance(app_spec, dict):
+        return None
+
     sources = app_spec.get('sources')
-    if sources:
+    if isinstance(sources, list) and sources:
         # Prefer source that already carries autoscaling helm parameters
         for src in sources:
-            if _source_param_names(src) & _AUTOSCALE_PARAM_NAMES:
+            if isinstance(src, dict) and _source_param_names(src) & _AUTOSCALE_PARAM_NAMES:
                 return src
 
         # Prefer an explicit helm block or a chart source
         for src in sources:
-            if src.get('helm') is not None or src.get('chart'):
+            if isinstance(src, dict) and (src.get('helm') is not None or src.get('chart')):
                 return src
 
         # Prefer a path-based source that is not ref-only (chart directory)
         for src in sources:
-            if src.get('path') and not _is_ref_only_values_source(src):
+            if isinstance(src, dict) and src.get('path') and not _is_ref_only_values_source(src):
                 return src
 
         # Last resort: first non ref-only source
         for src in sources:
-            if not _is_ref_only_values_source(src):
+            if isinstance(src, dict) and not _is_ref_only_values_source(src):
                 return src
 
         return None
 
     # Classic single-source Application
-    if 'source' not in app_spec or app_spec['source'] is None:
+    source = app_spec.get('source')
+    if source is None:
         app_spec['source'] = {}
-    return app_spec['source']
+        return app_spec['source']
+    if not isinstance(source, dict):
+        return None
+    return source
 
 
 def _ensure_helm_parameters_on_source(app_name, source: Dict, logger) -> list:
@@ -173,6 +182,8 @@ def _apply_hpa_values_to_parameters(app_name, helm_parameters: list, new_hpa_con
 def _normalize_destination(app_name, app_spec: Dict, logger) -> None:
     # app_spec.destination -> should have only one server or name
     # otherwise ArgoCD API will error: 'spec is invalid: application destination can't have both name and server defined'
+    if not isinstance(app_spec, dict):
+        return
     destination = app_spec.get('destination') or {}
     if 'server' in destination and 'name' in destination:
         logger.info(f'ArgoApp({app_name}) .spec.destination has .server and .name defined in it. Removing .server definition.')
@@ -180,7 +191,10 @@ def _normalize_destination(app_name, app_spec: Dict, logger) -> None:
         logger.info(f"ArgoApp({app_name}) Updated .destination: {destination}")
 
 
-def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config, logger):
+def update_app_spec_with_new_hpa_config(app_name, app_spec: Optional[Dict], new_hpa_config, logger):
+    if app_spec is None:
+        app_spec = {}
+
     source = find_helm_source(app_spec)
     if source is None:
         logger.error(
@@ -188,8 +202,8 @@ def update_app_spec_with_new_hpa_config(app_name, app_spec: Dict, new_hpa_config
         )
         raise ValueError(f"ArgoApp({app_name}) has no usable helm source")
 
-    sources = app_spec.get('sources')
-    if sources:
+    sources = app_spec.get('sources') if isinstance(app_spec, dict) else None
+    if isinstance(sources, list) and sources:
         logger.info(
             f"ArgoApp({app_name}) uses multi-source spec; updating helm source "
             f"repoURL={source.get('repoURL')} path={source.get('path')} chart={source.get('chart')}"
@@ -209,7 +223,7 @@ def update_argocd_app(app_name, new_hpa_config, logger):
         logger.error(f"ArgoCD App({app_name}) is NOT FOUND. Does this app exists on ArgoCD?")
         return False, _get_app_status
     
-    app_spec = app_data.get('spec')
+    app_spec = app_data.get('spec') or {}
     try:
         new_app_spec = update_app_spec_with_new_hpa_config(app_name, app_spec, new_hpa_config, logger)
     except ValueError:
