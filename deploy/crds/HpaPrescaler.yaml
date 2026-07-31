@@ -37,6 +37,7 @@ spec:
                   enum:
                     - UP
                     - DOWN
+                    - KEEP
                   nullable: true
             status:
               # x-kubernetes-preserve-unknown-fields: true
